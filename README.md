@@ -1,1 +1,1 @@
-# durable-workflows-with-effect-cluster
+# long-running-process
