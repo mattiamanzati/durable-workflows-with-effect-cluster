@@ -316,12 +316,81 @@ end
 ```
 <!--
 Thanks to this durable log, if the execution is retried after a server restart or a regular retry, the ProcessPayment workflow can skip altogether the already performed steps, and resume the pending execution were it left, avoiding useless execution of external services.
+-->
+---
 
-Defining an Activity:
+```mermaid
+sequenceDiagram
+box rgb(40,40,40) Workflow
+participant Workflow
+participant Service1 
+participant Service2
+participant Service3
+participant Service4
+end
+rect rgb(60,60,60)
+Workflow->>+Service1: Activity 1
+end
+rect rgb(60,60,60)
+Workflow->>Service2: Activity 2
+end
+rect rgb(60,60,60)
+Workflow->>+Service3: Activity 3
+end
+rect rgb(60,60,60)
+Workflow->>Service1: Activity 3
+end
+rect rgb(60,60,60) 
+Workflow->>Service4: Activity 4
+end
+```
+<!--
+Let's start by putting on some naming convention.
 
-The first thing we want to do is to define an Activity.
+From now on we'll call Activity the interaction from the workflow to the external services.
+A workflow is then just the logic glue that ties together a sequence of activities.
+-->
+---
+layout: two-cols
+---
+
+## Defining an activity
+<br/>
+
+- Work unit of a Workflow
+- Can interact with external systems
+- Uniquely identified inside Workflow
+- Requires schemas for success and failure
+- Will be retried upon restarts
+::right::
+
+
+```ts{13-17}
+const getTotalAmount = (id: string) =>
+  pipe(
+    Http.request.get(`/get-total-amount/${id}`)
+    .pipe(
+      Http.client.fetchOk(),
+      Effect.andThen((response) => response.json),
+      Effect.mapError(() => ({ 
+        code: 500, 
+        message: "API Fetch error" 
+        })
+      )
+    ),
+    Activity.make(
+      "get-amount-due", 
+      Schema.number, 
+      Schema.struct({ code: Schema.number, message: Schema.string })
+    )
+  )
+```
+
+<!--
+The first basic building block we want to define is an Activity.
 What is an activity? An activity is a effect that gets executed inside a workflow.
 It can do whatever you want, you can perform things on a database, you can make http calls, whatever you want.
+
 An activity is identified with a string that needs to be unique inside the execution of your workflow. 
 In order to know how to persist the execution result, an activity takes in both the schema of the failure and the success type it can results into. Only string defects are supported at the moment.
 Finally you have to provide the effect to be run as body of the activity.
