@@ -163,33 +163,145 @@ In any business process when we have an error we need to handle it or retry it i
 -->
 ---
 
+## Transactions?
+<br/>
+
+```sql{all}
+BEGIN TRANSACTION;
+UPDATE card_balances SET balance = balance - 10 WHERE card_number = 42
+UPDATE orders SET tracking_id = 'abc' WHERE order_id = 12
+COMMIT TRANSACTION;
+```
+<!--
+Since day one of learning how to develop software with databases when we were young we have been tought that we need to wrap multiple writes into one transaction, in order to ensure data consistency, right?
+
+With our BEGIN and COMMIT we were thought that we ensure that everything will either happen or completely fail, right?
+
+So how many of you just forgot to put your begin transaction and commit transaction instructions around your external services call?
+
+There is no magic begin commit and rollback function for external services.
+
+When interacting with different systems, like for example REST APIs, databases, and even users, ACID transactions are not an available option.
+
+-->
+---
+
 ## Business Process
 <br/>
 
 ```mermaid
-flowchart LR
-subgraph Request 
-direction LR
-getTotalAmount-->chargeCreditCard
-chargeCreditCard-->createShippingTrackingCode
-createShippingTrackingCode-->sendOrderToShipping
-sendOrderToShipping-->sendConfirmationEmail
+sequenceDiagram
+box rgb(40,40,40) Request
+participant ProcessPayment
+participant OrderAPI 
+participant PaymentGateway
+participant ShippingAPI
+participant EmailAPI
 end
+ProcessPayment->>+OrderAPI: getTotalAmount(orderId)
+OrderAPI->>-ProcessPayment: totalAmount
+ProcessPayment->>PaymentGateway: chargeCreditCard(cardNumber, totalAmount)
+ProcessPayment->>+ShippingAPI: createShippingTrackingCode(deliveryAddress)
+ShippingAPI->>-ProcessPayment: trackingId
+ProcessPayment->>OrderAPI: sendOrderToShipping(orderId, trackingId)
+ProcessPayment->>EmailAPI: sendConfirmationEmail(email, orderId, trackingId)
 ```
 
 <!--
 
 All business process end up looking exactly the one I described before, even more complicated than that, and no matter how you write your code, using different methods or a single long procedural code, or using whatever library you want, they all end up having the same problem.
-They have to perform everything and work inside the request, because it's all in process. There are various steps and all need to be handled if this fails, I need to ensure to do that, and all of that has to work and be executed in process.
+They have to perform everything and work inside the request, because it's all in process. There are various steps and all need to be handled if this fails, I need to ensure to do that, and all of that has to work and be executed in process, or even in-request.
 
 So what happens if due to retries on temporary onavailable system the business process is taking hours or even days to complete?
 What happens to our business process if for some reason we have to restart or kill our server due to an update?
-Our local retries won't help here, as the process will be completely restarted from the first step.
+Our local retries won't help here, as the process will be completely restarted from the first step upon server restart.
+-->
+
+---
+layout: image-left
+image: /image-saga.png
+---
+
+## ...long lived transactions?
+<br/>
+
+- Sagas!
+- in 1987 they had computers!
 
 
-The basic idea is that maybe I want to break this entire business process that is running inside a single process top to bottom into many different systems, each one dealing with its own failures.
+<!--
+In the search for possible solutions to this problem, we stumble upon a really old paper that can help us moving towards the right direction.
 
+The paper is called Saga, and back in the days it tried to solve a really similar problem.
+Basically they had this heavy computations that would hold onto a database transaction for a really long time, until finished, and this prevented any other smaller transaction to be performed, making the system completely unresponsive.
 
+And as we are now, they were looking for a way that even across server restarts, the system will eventually complete the execution of all of the steps, or revert completely as it never happened in the same way a single acid transaction would behaved.
+-->
+
+---
+
+```mermaid
+sequenceDiagram
+participant ProcessPayment
+participant OrderAPI 
+participant PaymentGateway
+participant ShippingAPI
+participant EmailAPI
+rect rgb(40,40,40)
+ProcessPayment->>+OrderAPI: getTotalAmount(orderId)
+OrderAPI->>-ProcessPayment: totalAmount
+end
+rect rgb(60,60,60)
+ProcessPayment->>PaymentGateway: chargeCreditCard(cardNumber, totalAmount)
+end
+rect rgb(40,40,40)
+ProcessPayment->>+ShippingAPI: createShippingTrackingCode(deliveryAddress)
+ShippingAPI->>-ProcessPayment: trackingId
+end
+rect rgb(60,60,60)
+ProcessPayment->>OrderAPI: sendOrderToShipping(orderId, trackingId)
+end
+rect rgb(40,40,40) 
+ProcessPayment->>EmailAPI: sendConfirmationEmail(email, orderId, trackingId)
+end
+```
+
+<!--
+
+The idea is, instead of having a big long process that spans the entire flow of multiple steps that could involve external systems as we have seen before, you could actually break it up into many smaller steps, and perform them one after the other, and they are hold on together by some kind of messaging or signaling.
+
+Some kind of persistence will record the interactions between the ProcessPayment and the external systems, by storing in a durable record the attempts to call the external systems and the eventual result they returned.
+
+-->
+---
+
+```mermaid
+sequenceDiagram
+participant ProcessPayment
+participant OrderAPI 
+participant PaymentGateway
+participant ShippingAPI
+participant EmailAPI
+rect rgb(40,90,40)
+ProcessPayment->>+OrderAPI: getTotalAmount(orderId)
+OrderAPI->>-ProcessPayment: totalAmount
+end
+rect rgb(60,90,60)
+ProcessPayment->>PaymentGateway: chargeCreditCard(cardNumber, totalAmount)
+end
+rect rgb(40,40,40)
+ProcessPayment->>+ShippingAPI: createShippingTrackingCode(deliveryAddress)
+ShippingAPI->>-ProcessPayment: trackingId
+end
+rect rgb(60,60,60)
+ProcessPayment->>OrderAPI: sendOrderToShipping(orderId, trackingId)
+end
+rect rgb(40,40,40) 
+ProcessPayment->>EmailAPI: sendConfirmationEmail(email, orderId, trackingId)
+end
+```
+<!--
+Thanks to this durable log, if the execution is retried after a server restart or a regular retry, the ProcessPayment workflow can skip altogether the already performed steps, and resume the pending execution were it left, avoiding useless execution of external services.
 
 Defining an Activity:
 
