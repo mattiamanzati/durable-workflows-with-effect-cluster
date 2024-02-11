@@ -163,29 +163,6 @@ In any business process when we have an error we need to handle it or retry it i
 -->
 ---
 
-## Transactions?
-<br/>
-
-```sql{all}
-BEGIN TRANSACTION;
-UPDATE card_balances SET balance = balance - 10 WHERE card_number = 42
-UPDATE orders SET tracking_id = 'abc' WHERE order_id = 12
-COMMIT TRANSACTION;
-```
-<!--
-Since day one of learning how to develop software with databases when we were young we have been tought that we need to wrap multiple writes into one transaction, in order to ensure data consistency, right?
-
-With our BEGIN and COMMIT we were thought that we ensure that everything will either happen or completely fail, right?
-
-So how many of you just forgot to put your begin transaction and commit transaction instructions around your external services call?
-
-There is no magic begin commit and rollback function for external services.
-
-When interacting with different systems, like for example REST APIs, databases, and even users, ACID transactions are not an available option.
-
--->
----
-
 ## Business Process
 <br/>
 
@@ -215,6 +192,42 @@ They have to perform everything and work inside the request, because it's all in
 So what happens if due to retries on temporary onavailable system the business process is taking hours or even days to complete?
 What happens to our business process if for some reason we have to restart or kill our server due to an update?
 Our local retries won't help here, as the process will be completely restarted from the first step upon server restart.
+
+-->
+
+---
+
+## Transactions?
+<br/>
+
+```sql{all}
+BEGIN TRANSACTION;
+UPDATE card_balances SET balance = balance - 10 WHERE card_number = 42
+UPDATE orders SET tracking_id = 'abc' WHERE order_id = 12
+COMMIT TRANSACTION;
+```
+<!--
+Some people may say that this problem is really trivial, and what you need to do is just put some transactions around, so you ensure that upon missing commit all the changes made to the system before will be rolled back.
+
+So BEGIN and COMMIT you can ensure that will either happen or completely fail, right?
+
+The problem is that there is no magic begin commit and rollback function for external services.
+
+When interacting with different systems, like for example REST APIs, emails, etc..., ACID transactions are not an available option.
+
+External systems receive writes, and are not partecipant of the transaction.
+-->
+
+---
+layout: fact
+---
+
+## Welcome Effect Cluster
+All the building blocks you need to deal with distributed workflows with ease!
+
+<!--
+As we've just seen building workflow that deal with external systems can be quite a pain.
+And that's why we started building Effect Cluster, a library that helps you by providing all the basic building blocks you need in order to create and orchestrate your distributed workflows.
 -->
 
 ---
@@ -230,9 +243,10 @@ image: /image-saga.png
 
 
 <!--
-In the search for possible solutions to this problem, we stumble upon a really old paper that can help us moving towards the right direction.
+One of the concept that helped shaping up Effect Cluster is the concept of a Saga.
 
-The paper is called Saga, and back in the days it tried to solve a really similar problem.
+The concept of Saga cames from a really old paper and back in the days it tried to solve a really similar yet different problem problem.
+
 Basically they had this heavy computations that would hold onto a database transaction for a really long time, until finished, and this prevented any other smaller transaction to be performed, making the system completely unresponsive.
 
 And as we are now, they were looking for a way that even across server restarts, the system will eventually complete the execution of all of the steps, or revert completely as it never happened in the same way a single acid transaction would behaved.
