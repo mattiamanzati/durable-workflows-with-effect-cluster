@@ -359,13 +359,14 @@ layout: two-cols
 
 - Work unit of a Workflow
 - Can interact with external systems
+- Executes an Effect
 - Uniquely identified inside Workflow
 - Requires schemas for success and failure
 - Will be retried upon restarts
+
 ::right::
 
-
-```ts{13-17}
+```ts{all|14|15|16}
 const getTotalAmount = (id: string) =>
   pipe(
     Http.request.get(`/get-total-amount/${id}`)
@@ -379,8 +380,8 @@ const getTotalAmount = (id: string) =>
       )
     ),
     Activity.make(
-      "get-amount-due", 
-      Schema.number, 
+      "get-amount-due", // identifier
+      Schema.number, // success schema
       Schema.struct({ code: Schema.number, message: Schema.string })
     )
   )
@@ -395,16 +396,84 @@ An activity is identified with a string that needs to be unique inside the execu
 In order to know how to persist the execution result, an activity takes in both the schema of the failure and the success type it can results into. Only string defects are supported at the moment.
 Finally you have to provide the effect to be run as body of the activity.
 That effect will be retried by default, so it needs to be idempotent.
+-->
 
-Activities can be interrupted either if we request to kill the entire workflow, or just to perform a graceful restart of the WorkflowEngine.
-In case of a graceful restart of the workflow engine, you can detect that by using WorkflowContext.isGracefulShutdown
 
-We can see that an activity is just a regular Effect, that requires in its env a WorkflowContext.
+---
+layout: two-cols
+---
 
-Defining Workflow:
+## Defining a workflow
+<br/>
 
-A workflow is a coordinator of multiple activities that has guaranteed durable execution, and have some contrains.
+- Is started by a Request
+- Is identified by a globally unique id
+- Requires schemas for success and failure
+- Has a payload of information
+
+::right::
+
+```ts
+class ProcessPaymentRequest 
+  extends Schema.TaggedRequest<ProcessPaymentRequest>()(
+  "ProcessPaymentRequest",
+  Schema.never, // failure
+  Schema.boolean, // success
+  {
+    orderId: Schema.string,
+    cardNumber: Schema.string,
+    email: Schema.string,
+    deliveryAddress: Schema.string
+  }
+) {
+}
+```
+<!--
+Before defining a workflow, we need to define a Request that is used to start the workflow.
+The request should have a schema for both the error and the success case, in order to allow persistence of the execution result of the workflow.
+The request object itself can also have additional information that is used by the workflow to kick off the execution, they are indeed the arguments you can pass in to your workflow function.
+-->
+---
+layout: two-cols-header
+---
+
+
+## Defining a workflow
+
+```ts{all}
+const processPaymentWorkflow = Workflow.make(
+  ProcessPaymentRequest,
+  (_) => "ProcessPayment@" + _.orderId,
+  ({ cardNumber, deliveryAddress, email, orderId }) =>
+    Effect.gen(function*(_) {
+      const totalAmount = yield* _(getTotalAmount(orderId))
+      yield* _(chargeCreditCard(cardNumber, totalAmount))
+      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
+      yield* _(sendOrderToShipping(orderId, trackingId))
+      yield* _(sendConfirmationEmail(email, orderId, trackingId))
+    })
+)
+```
+<br/>
+::left::
+
+- Coordinator of activities
+- Durable execution
+- Requires deterministic code
+
+::right::
+
+
+<!--
+And here we have instead how we define a workflow.
+
+As you can see you need to pass in the RequestType this workflow can handle.
+The second argument is a function that given the request will create a globally unique string that identifies this workflow instance, and this string identifier can be used both internally and externally to reference this instance of the workflow.
+The last argument is the body of the workflow that is an effect that inside itself will call some activities.
+
+As we said before, a workflow is a coordinator of multiple activities that has guaranteed durable execution, and therefore have some contrains.
 In order to allow workflows to be executed for days across potential server restarts, they need to be coded in a way the only perform deterministic work.
+
 What does it means to be deterministic? 
 It basically means that whatever the state of the system you are into, the output should be always the same and predictable.
 Accessing time, reading from the filesystem or a database, and making an http call is not deterministic by default, as they completely depend on the state of the system or the execution.
@@ -414,9 +483,12 @@ Does that mean that you cannot perform non-deterministic work? No, that just nee
 The determinism is what allows workflows to be durable. 
 Upon server restarts, your workflow code will be executed again, and since all of the activities inside of the workflow are deterministic, we can guarantee that by replaying the execution we'll reach the same state we were in before the server stopped. 
 
-This is the general representation of how we define a workflow.
 
 We use a TaggedRequest class to represent the request of starting the workflow
+
+-->
+
+<!--
 
 Running a workflow:
 
@@ -473,6 +545,15 @@ That is a little more trickier, but not so much.
 Versioning workflows:
 
 As we said before, workflow definition code must be deterministic.
+
+
+
+
+
+Activities can be interrupted either if we request to kill the entire workflow, or just to perform a graceful restart of the WorkflowEngine.
+In case of a graceful restart of the workflow engine, you can detect that by using WorkflowContext.isGracefulShutdown
+
+We can see that an activity is just a regular Effect, that requires in its env a WorkflowContext.
 
 Yield inside a workflow.
 Consider an AttemptFailedEvent that yields execution.
