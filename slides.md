@@ -37,53 +37,157 @@ image: /image-me.jpg
 
 ---
 
-aa
-<!--
-We've all had to deal with something like this at least once in your lifetime.
-Sure, the domain of your problem may change a little, but we all had to at least once.
+## Everyday Code
+<br/>
 
-We first attempt to save our order into the DB.
-Then we tell the warehouse to reserve the stock for the products in the order.
+```ts{all}
+const processPayment = 
+  (cardNumber: CardNumber, deliveryAddress: DeliveryAddress, 
+  email: EmailAddress, orderId: OrderId) =>
+    Effect.gen(function*(_) {
+      // get total order amount
+      const totalAmount = yield* _(getTotalAmount(orderId))
+      // charge the credit card
+      yield* _(chargeCreditCard(cardNumber, totalAmount))
+      // create a tracking id
+      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
+      // send the order to shipment
+      yield* _(sendOrderToShipping(orderId, trackingId))
+      // send a confirmation email
+      yield* _(sendConfirmationEmail(email, orderId, trackingId))
+    })
+```
+
+<!--
+We've all had to deal with a computation like this at least once in your lifetime.
+And I am sure that even today in some point of your application you indeed have one like this in production.
+Sure, the domain of your problem may change a little, maybe its not processing a payment, but let's take this as today's example.
+
+
+We first get back from the order the total amount that is due to the products in the order.
 Once we've done that, we process the payment through our payment gateway.
-And finally, we try and send a confirmation email to the user. 
+And finally, we create a trackingId for the shipping, tell the warehouse that the order can be shipped, and send a confirmation email to the user that also contains the tracking id.
 
 There is a lot going on in here.
+But can you spot the problem we have in our code?
 
 The real problem here is that we have a complex workflow that may branch in different ways we need to manage.
 And there may be some failures along the way.
-
 Sure the happy path is pretty clear, but what happens if something fails?
-Sure effect is of great help with this, and as long correctly define each building block, the effect datatype let the possible errors pass through so we can handle them.
+-->
 
-How to handle them?
+---
 
+## Failures along the way
+<br/>
+
+```ts{all}
+
+function chargeCreditCard(cardNumber, totalAmount): Effect<void, InsufficientFundsError | PaymentGateway503Error>
+function createShippingTrackingCode(deliveryAddress): Effect<TrackingId, NoMoreApiCallQuotaError>
+function sendConfirmationEmail(email, orderId, trackingId): Effect<void, SmtpFailureError>
+
+const processPayment: Effect<
+    void, 
+    InsufficientFundsError | PaymentGateway503Error | NoMoreApiCallQuotaError | SmtpFailureError
+  > = ...
+```
+<!--
+
+Effect is a tool that is of great help with this, and as long correctly define each building block, the effect datatype let the possible errors pass through so we can handle them.
+
+But what do we do with those errors? How should we handle them? Just letting the list growing is not an option.
+-->
+
+---
+
+## Log on failure
+<br/>
+
+```ts{all}
+const processPayment = 
+  (cardNumber: CardNumber, deliveryAddress: DeliveryAddress, 
+  email: EmailAddress, orderId: OrderId) =>
+    Effect.gen(function*(_) {
+      const totalAmount = yield* _(getTotalAmount(orderId))
+      yield* _(chargeCreditCard(cardNumber, totalAmount))
+      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
+      // ^- failure raised here!
+      yield* _(sendOrderToShipping(orderId, trackingId)) // skipped
+      yield* _(sendConfirmationEmail(email, orderId, trackingId)) // skipped
+    })
+```
+<!--
 Ok, let's say we start very simple, and we just bounce back the error to the user into some fancy UI.
 
-What happens if the workflows succefully registers the order, reserves the stock, process the payment and than we fail to send the confirmation email to the user? The user will indeed see a fancy error page saying "Oops, we failed to send you an email!", but what will happen to the just received order? Will it be processed anyway? Will it be clear to the purchasing user that he does not need to do anything because the order has been received anyway?
+What happens if the workflows succefully registers the order, process the payment and then fail to create the tracking id due to the hourly quota being exausted? 
+The user will indeed see a fancy error page saying "Oops, you exausted your API quota", but what will happen to the just received order? Will it be processed anyway? Will it be clear to the purchasing user that he does not need to do anything because the order has been received anyway?
+-->
 
-Maybe most of the errors will take care of themselves just with time right? So why not just try again?
+---
+
+## Retrying everything
+<br/>
+
+```ts{all}
+const processPayment = 
+  (cardNumber: CardNumber, deliveryAddress: DeliveryAddress, 
+  email: EmailAddress, orderId: OrderId) =>
+    Effect.gen(function*(_) {
+      const totalAmount = yield* _(getTotalAmount(orderId))
+      yield* _(chargeCreditCard(cardNumber, totalAmount))
+      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
+      // ^- failure raised here!
+      yield* _(sendOrderToShipping(orderId, trackingId)) // skipped
+      yield* _(sendConfirmationEmail(email, orderId, trackingId)) // skipped
+    }).pipe(
+      Effect.retry({
+        while: error => isTemporaryError(error)
+      })
+    )
+```
+<!--
+Most of the errors we have here will take care of themselves just with time right? So why not just try again?
+This way we potentially get out of our error list all of those errors that are temporary.
 
 Sure, effect is great because inside its computation primitive retries are already a built in concept, so maybe what we can do upon an error is simply attempt to perform again the entire workflow right?
 We can simply toss in a retry policy over the entire workflow and that's it.
 
-But it has its problems. Back to our example, let's say that on the first run we succefully saved the order into the DB, we reserved the stock and than the payment failed. And that's very common when using payment gateway, it may not respond, it may time out, etc...
+But it has its problems. Back to our example, let's say that on the first run we succefully get the amount to pay, we process the payment, and again we fail to create the tracking id.
 
 What do we expect to happen when we retry again the whole workflow?
 
-Will it be written again into the database and came up with the same order twice? Will the warehouse reserve twice the amount of the products we need?
-
+Will the credit card be charged again for the same order? This does not seem right.
 We cannot just retry everything and call it a day.
+In any business process when we have an error we need to handle it or retry it in some meaningful way, providing just the error or retrying everything is not enough.
+-->
+---
 
-And we can now see that indeed we have that branching logic in case something goes wrong.
-In any business process when we have an error we need to handle it in some meaningful way, providing just the error or retrying is not enough.
+## Business Process
+<br/>
 
+```mermaid
+flowchart LR
+subgraph Request 
+direction LR
+getTotalAmount-->chargeCreditCard
+chargeCreditCard-->createShippingTrackingCode
+createShippingTrackingCode-->sendOrderToShipping
+sendOrderToShipping-->sendConfirmationEmail
+end
+```
 
-And all business process end up looking exactly the one I described before, even more complicated than that, and no matter how you write your code, using different methods or a single long procedural code, they all have to perform everything and work inside the request, because it's all in process. There are various steps and all need to be handled if this fails, I need to ensure to do that, and all of that has to work and be executed.
+<!--
+
+All business process end up looking exactly the one I described before, even more complicated than that, and no matter how you write your code, using different methods or a single long procedural code, or using whatever library you want, they all end up having the same problem.
+They have to perform everything and work inside the request, because it's all in process. There are various steps and all need to be handled if this fails, I need to ensure to do that, and all of that has to work and be executed in process.
+
+So what happens if due to retries on temporary onavailable system the business process is taking hours or even days to complete?
+What happens to our business process if for some reason we have to restart or kill our server due to an update?
+Our local retries won't help here, as the process will be completely restarted from the first step.
 
 
 The basic idea is that maybe I want to break this entire business process that is running inside a single process top to bottom into many different systems, each one dealing with its own failures.
-
-Ultimately we just want to split each one of those into its own system that will deal itself with its failures. Going from everything running into a single process, into maybe multiple ones.
 
 
 
@@ -175,15 +279,8 @@ Versioning workflows:
 
 As we said before, workflow definition code must be deterministic.
 
-
-
-
-
 Yield inside a workflow.
 Consider an AttemptFailedEvent that yields execution.
 Consider adding an Activity Heartbeat.
-Consider adding a durable Sleep
-Add retryWhileError((error) => boolean)
-
 -->
 
