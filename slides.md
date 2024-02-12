@@ -63,6 +63,7 @@ We've all had to deal with a computation like this at least once in your lifetim
 And I am sure that even today in some point of your application you indeed have one like this in production.
 Sure, the domain of your problem may change a little, maybe its not processing a payment, but let's take this as today's example.
 
+Let's see what happens step by step.
 
 We first get back from the order the total amount that is due to the products in the order.
 Once we've done that, we process the payment through our payment gateway.
@@ -579,22 +580,39 @@ Once the workflow engine starts the activity, it becames a black box for it unti
 -->
 
 ---
+layout: two-cols
+---
 
-```mermaid
+
+## The double-payment problem
+<br/>
+
+- Any transport may fail
+- Not getting a response does not mean it has not been processed
+
+::right::
+
+```mermaid { scale: 0.55 }
 sequenceDiagram
-box rgb(50,50,50) WorkflowEngine
+box rgb(50,50,50)
 participant Workflow
 end
-box rgb(40,40,40) Payment Service
+box rgb(40,40,40)
 participant PaymentRestAPI
 participant PaymentProcessor
 end
 rect rgb(40,60,40)
-Workflow->>+PaymentRestAPI: HTTP Request
+Workflow->>+PaymentRestAPI: HTTP Request (1st attempt)
 PaymentRestAPI->>+PaymentProcessor: Begin Processing
 PaymentProcessor->>-PaymentRestAPI: Payment Performed
 end
 rect rgb(60,40,40)
+PaymentRestAPI->>-Workflow: HTTP Response
+end
+rect rgb(40,60,40)
+Workflow->>+PaymentRestAPI: HTTP Request (2nd attempt)
+PaymentRestAPI->>+PaymentProcessor: Begin Processing
+PaymentProcessor->>-PaymentRestAPI: Payment Performed
 PaymentRestAPI->>-Workflow: HTTP Response
 end
 ```
@@ -610,6 +628,7 @@ That means that eventually the workflow will attempt to execute again the activi
 
 So we just learned that while workflows are required to be deterministic, activities are required to be idempotent.
 -->
+
 ---
 layout: fact
 ---
@@ -627,9 +646,70 @@ Is performing an insert idempotent? No, because calling multiple times the query
 
 Is performing a delete by primary key idempotent? Yes but no, yes because trying to delete an already deleted record will not result into any system change, but I need to say no because some other user may have inserted another record again in the database while we performed the delete the second time.
 -->
+---
+layout: two-cols
+---
+
+## Idempotence using IDs
+<br/>
+
+```ts {all}
+const chargeCreditCard = 
+ (cardNumber: string, amountDue: number) =>
+  pipe(
+    Activity.persistenceId,
+    Effect.flatMap(
+      (persistenceId) => callPaymentGateway(
+        persistenceId, 
+        cardNumber, 
+        amountDue
+      )
+    ),
+    Activity.make(
+      "charge-credit-card",
+      Schema.void, 
+      Schema.never
+    )
+  )
+
+```
+
+::right::
+
+```mermaid { scale: 0.55 }
+sequenceDiagram
+box rgb(50,50,50)
+participant Workflow
+end
+box rgb(40,40,40)
+participant PaymentRestAPI
+participant PaymentProcessor
+end
+rect rgb(40,60,40)
+Workflow->>+PaymentRestAPI: HTTP Request (1st attempt)
+PaymentRestAPI->>+PaymentProcessor: Begin Processing
+PaymentProcessor->>-PaymentRestAPI: Payment Performed 
+end
+rect rgb(60,40,40)
+PaymentRestAPI->>-Workflow: HTTP Response
+end
+rect rgb(40,60,40)
+Workflow->>+PaymentRestAPI: HTTP Request (2nd attempt)
+PaymentRestAPI->>+PaymentProcessor: Request Payment
+PaymentProcessor->>PaymentProcessor: Skip as already processed
+PaymentProcessor->>-PaymentRestAPI: Payment Performed
+PaymentRestAPI->>-Workflow: HTTP Response
+end
+```
 
 <!--
-A common practice to avoid that is using unique keys for each request, that way the remote service is able to detect duplicated requests, and avoid processing the same request twice.
+A common practice to avoid that is using unique keys for each request, usually known as idempotence key.
+Using an idempotence key, the remote service is able to detect duplicated requests, and avoid processing the same request twice.
+
+And Effect Cluster already provides you a deterministic execution id that can be used as idempotence key for your activities.
+There is also a method to access the current attempt number, in order to know if this is the first time that you are trying to execute your activity.
+
+
 
 Fixing workflows:
 
@@ -662,4 +742,3 @@ We can see that an activity is just a regular Effect, that requires in its env a
 
 Yield inside a workflow.
 -->
-
