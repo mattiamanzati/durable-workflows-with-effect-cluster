@@ -474,30 +474,100 @@ The last argument is the body of the workflow that is an effect that inside itse
 As we said before, a workflow is a coordinator of multiple activities that has guaranteed durable execution, and therefore have some contrains.
 In order to allow workflows to be executed for days across potential server restarts, they need to be coded in a way the only perform deterministic work.
 
-What does it means to be deterministic? 
-It basically means that whatever the state of the system you are into, the output should be always the same and predictable.
-Accessing time, reading from the filesystem or a database, and making an http call is not deterministic by default, as they completely depend on the state of the system or the execution.
-
-Does that mean that you cannot perform non-deterministic work? No, that just needs to be wrapped inside an activity.
-
-The determinism is what allows workflows to be durable. 
-Upon server restarts, your workflow code will be executed again, and since all of the activities inside of the workflow are deterministic, we can guarantee that by replaying the execution we'll reach the same state we were in before the server stopped. 
-
-
-We use a TaggedRequest class to represent the request of starting the workflow
-
 -->
+---
+layout: two-cols-header
+---
+## WTF is deterministic?
+
+Given a set of input, the output of the function must be always the same and predictable, without triggering any side effects that may later affect the computation.
+
+::left::
+#### Deterministic
+
+- Math & Logic ops
+- Seed based random
+
+::right::
+#### Non-Deterministic
+
+- Math.random()
+- new Date()
+- R/W Global Shared State (also DB)
 
 <!--
 
-Running a workflow:
+What does it means to be deterministic? 
+It basically means that whatever the state of the system you are into, the output should be always the same and predictable.
+Accessing time, reading from the filesystem or a database, and making an http call is not deterministic by default, as they completely depend on the state of the system or the execution.
+-->
+---
 
+## Determinism & Workflows
+
+```ts{all}
+const processPaymentWorkflow = Workflow.make(
+  ProcessPaymentRequest,
+  (_) => "ProcessPayment@" + _.orderId,
+  ({ cardNumber, deliveryAddress, email, orderId }) =>
+    Effect.gen(function*(_) {
+      const totalAmount = yield* _(Effect.succeed(42.1) /* getTotalAmount(orderId) */) 
+      yield* _(Effect.unit /* chargeCreditCard(cardNumber, totalAmount) */)
+      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
+      yield* _(sendOrderToShipping(orderId, trackingId))
+      yield* _(sendConfirmationEmail(email, orderId, trackingId))
+    })
+)
+```
+<!--
+
+The determinism is what allows workflows to be durable. 
+Upon server restarts, your workflow code will be executed again.
+Any activity that has been succefully run to completion in previous execution will be replaced by the stored result.
+Thanks to the workflow code being deterministic, we can guarantee that by replaying the execution we'll reach the same state we were in before the server stopped. 
+
+Does that mean that you cannot perform non-deterministic work? No, it just needs to be wrapped inside an activity.
+-->
+---
+
+## Running a Workflow
+
+```ts{all}
+const main = Effect.gen(function*(_) {
+  const workflows = Workflow.union(processPaymentWorkflow, requestRefundWorkflow)
+  const engine = yield* _(WorkflowEngine.makeScoped(workflows)) 
+  yield* _(
+    engine.sendDiscard(
+      new ProcessPaymentRequest({
+        orderId: "order-1",
+        cardNumber: "my-card",
+        deliveryAddress: "My address, 5, Italy",
+        email: "my@email.com"
+      })
+    )
+  )
+})
+runMain(
+  pipe(
+    main,
+    Effect.provide(DurableExecutionJournalPostgres.DurableExecutionJournalPostgres)
+  )
+)
+```
+
+<!--
 Ok, now we created a workflow. How do we run it?
 We need to spawn up a WorkflowEngine.
-The WorkflowEngine is the working unit that is responsible of keep track of all the workflows being executed, and provides to each workflow the durable storage it needs to persist its state changes.
+The WorkflowEngine is the working unit that is responsible of starting new workflow instances and keep track of all the workflows instances being executed.
+You can either start a new execution of a workflow without caring for the result by using the sendDiscard method, or start it and wait for the result to came back using send.
 
-The workflow engine is also the entry point were you can invoke the start of any workflow you want.
-You can either start a new execution of a workflow without caring for the result, or start it and wait for the result to came back.
+In order to create a WorkflowEngine you need to provide a durable storage that will be used by the activities to store the attempts of execution and the successful results.
+-->
+---
+
+## DurableExecutionJournal
+
+<!--
 
 Idempotency:
 
@@ -556,7 +626,5 @@ In case of a graceful restart of the workflow engine, you can detect that by usi
 We can see that an activity is just a regular Effect, that requires in its env a WorkflowContext.
 
 Yield inside a workflow.
-Consider an AttemptFailedEvent that yields execution.
-Consider adding an Activity Heartbeat.
 -->
 
