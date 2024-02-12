@@ -474,57 +474,162 @@ The last argument is the body of the workflow that is an effect that inside itse
 As we said before, a workflow is a coordinator of multiple activities that has guaranteed durable execution, and therefore have some contrains.
 In order to allow workflows to be executed for days across potential server restarts, they need to be coded in a way the only perform deterministic work.
 
-What does it means to be deterministic? 
-It basically means that whatever the state of the system you are into, the output should be always the same and predictable.
-Accessing time, reading from the filesystem or a database, and making an http call is not deterministic by default, as they completely depend on the state of the system or the execution.
-
-Does that mean that you cannot perform non-deterministic work? No, that just needs to be wrapped inside an activity.
-
-The determinism is what allows workflows to be durable. 
-Upon server restarts, your workflow code will be executed again, and since all of the activities inside of the workflow are deterministic, we can guarantee that by replaying the execution we'll reach the same state we were in before the server stopped. 
-
-
-We use a TaggedRequest class to represent the request of starting the workflow
-
 -->
+---
+layout: two-cols-header
+---
+## WTF is deterministic?
+
+Given a set of input, the output of the function must be always the same and predictable, without triggering any side effects that may later affect the computation.
+
+::left::
+#### Deterministic
+
+- Math & Logic ops
+- Seed based random
+
+::right::
+#### Non-Deterministic
+
+- Math.random()
+- new Date()
+- R/W Global Shared State (also DB)
 
 <!--
 
-Running a workflow:
+What does it means to be deterministic? 
+It basically means that whatever the state of the system you are into, the output should be always the same and predictable.
+Accessing time, reading from the filesystem or a database, and making an http call is not deterministic by default, as they completely depend on the state of the system or the execution.
+-->
+---
 
+## Determinism & Workflows
+
+```ts{all}
+const processPaymentWorkflow = Workflow.make(
+  ProcessPaymentRequest,
+  (_) => "ProcessPayment@" + _.orderId,
+  ({ cardNumber, deliveryAddress, email, orderId }) =>
+    Effect.gen(function*(_) {
+      const totalAmount = yield* _(Effect.succeed(42.1) /* getTotalAmount(orderId) */) 
+      yield* _(Effect.unit /* chargeCreditCard(cardNumber, totalAmount) */)
+      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
+      yield* _(sendOrderToShipping(orderId, trackingId))
+      yield* _(sendConfirmationEmail(email, orderId, trackingId))
+    })
+)
+```
+<!--
+
+The determinism is what allows workflows to be durable. 
+Upon server restarts, your workflow code will be executed again.
+Any activity that has been succefully run to completion in previous execution will be replaced by the stored result.
+Thanks to the workflow code being deterministic, we can guarantee that by replaying the execution we'll reach the same state we were in before the server stopped. 
+
+Does that mean that you cannot perform non-deterministic work? No, it just needs to be wrapped inside an activity.
+-->
+---
+
+## Running a Workflow
+
+```ts{all}
+const main = Effect.gen(function*(_) {
+  const workflows = Workflow.union(processPaymentWorkflow, requestRefundWorkflow)
+  const engine = yield* _(WorkflowEngine.makeScoped(workflows)) 
+  yield* _(
+    engine.sendDiscard(
+      new ProcessPaymentRequest({
+        orderId: "order-1",
+        cardNumber: "my-card",
+        deliveryAddress: "My address, 5, Italy",
+        email: "my@email.com"
+      })
+    )
+  )
+})
+runMain(
+  pipe(
+    main,
+    Effect.provide(DurableExecutionJournalPostgres.DurableExecutionJournalPostgres)
+  )
+)
+```
+
+<!--
 Ok, now we created a workflow. How do we run it?
 We need to spawn up a WorkflowEngine.
-The WorkflowEngine is the working unit that is responsible of keep track of all the workflows being executed, and provides to each workflow the durable storage it needs to persist its state changes.
+The WorkflowEngine is the working unit that is responsible of starting new workflow instances and keep track of all the workflows instances being executed.
+You can either start a new execution of a workflow without caring for the result by using the sendDiscard method, or start it and wait for the result to came back using send.
 
-The workflow engine is also the entry point were you can invoke the start of any workflow you want.
-You can either start a new execution of a workflow without caring for the result, or start it and wait for the result to came back.
+In order to create a WorkflowEngine you need to provide a durable storage that will be used by the activities to store the attempts of execution and the successful results.
+-->
+---
+layout: fact
+---
 
-Idempotency:
+# Activity is a Black Box
 
-We said before that determinism is very important, and it's the determinism that allows workflows to be written such as some kind of failures or timeouts does not exists.
+<!--
+We said before that determinism is very important, and it's the determinism that allows workflows to be written such as some kind of failures or timeouts does not exists and they are retied indefinetely.
 
 Code with side effects, must be run inside an activity, and that is because when replaying the workflow, the engine will use the rusult of previous run of the activities instead of running them again. 
 
-But unfortunately the Workflowengine does not have any inside about what our activity is doing.
+But unfortunately the WorkflowEngine does not have any inside about what our activity is doing.
 Once the workflow engine starts the activity, it becames a black box for it until the result comes back.
+-->
 
-That means if that your activity starts the execution, and for some reason the server crashes while performing the activity, upon restart, the activity will be started again by the workflow as it were never started before.
+---
 
-Back to our example, what happens is that if the activity is trying to charge the credit card calling an external http API, but meanwhile the server goes down, upon restart we will charge again the credit card, right?
+```mermaid
+sequenceDiagram
+box rgb(50,50,50) WorkflowEngine
+participant Workflow
+end
+box rgb(40,40,40) Payment Service
+participant PaymentRestAPI
+participant PaymentProcessor
+end
+rect rgb(40,60,40)
+Workflow->>+PaymentRestAPI: HTTP Request
+PaymentRestAPI->>+PaymentProcessor: Begin Processing
+PaymentProcessor->>-PaymentRestAPI: Payment Performed
+end
+rect rgb(60,40,40)
+PaymentRestAPI->>-Workflow: HTTP Response
+end
+```
 
-While workflows are required to be deterministic, activities are instead required to be idempotent.
+<!--
+Let's say for example that your workflow calls an HTTP payment api.
+You trigger the HTTP request from your server, the request arrives on the payment rest api, and the execution of the request starts.
+The execution completes on the payment processor, but just before receiving the HTTP response, the connection is unstable and it never arrives.
 
-What does idempotent mean?
+On the workflow side the activity never received a response, so it never completed.
+Seen by the workflow side the issue is a network issue, and its the same as the request was never received by the payment rest api.
+That means that eventually the workflow will attempt to execute again the activity, thinking that it never succeeded before.
+
+So we just learned that while workflows are required to be deterministic, activities are required to be idempotent.
+-->
+---
+layout: fact
+---
+## Idempotency
+
+Multiple invocation of the same function, result on a state change as they were executed only the first time.
+
+<!--
+What does exactly idempotent mean?
 
 Idempotent means that multiple invocation of an effect should result in state changes only upon the first invocation, subsequent one should not change the state of the system.
 
 Let's say that we have a database with a orders table, and the primary key is an autoincrement.
-
 Is performing an insert idempotent? No, because calling multiple times the query will result in multiple duplicated record in the same database.
 
 Is performing a delete by primary key idempotent? Yes but no, yes because trying to delete an already deleted record will not result into any system change, but I need to say no because some other user may have inserted another record again in the database while we performed the delete the second time.
+-->
 
-A common practice to avoid that is using unique keys for each request, in order to detect duplicated requests.
+<!--
+A common practice to avoid that is using unique keys for each request, that way the remote service is able to detect duplicated requests, and avoid processing the same request twice.
 
 Fixing workflows:
 
@@ -556,7 +661,5 @@ In case of a graceful restart of the workflow engine, you can detect that by usi
 We can see that an activity is just a regular Effect, that requires in its env a WorkflowContext.
 
 Yield inside a workflow.
-Consider an AttemptFailedEvent that yields execution.
-Consider adding an Activity Heartbeat.
 -->
 
