@@ -599,20 +599,20 @@ participant Workflow
 end
 box rgb(40,40,40)
 participant PaymentRestAPI
-participant PaymentProcessor
+participant BalanceDatabase
 end
 rect rgb(40,60,40)
 Workflow->>+PaymentRestAPI: HTTP Request (1st attempt)
-PaymentRestAPI->>+PaymentProcessor: Begin Processing
-PaymentProcessor->>-PaymentRestAPI: Payment Performed
+PaymentRestAPI->>+BalanceDatabase: Begin Processing
+BalanceDatabase->>-PaymentRestAPI: Payment Performed
 end
 rect rgb(60,40,40)
 PaymentRestAPI->>-Workflow: HTTP Response
 end
 rect rgb(40,60,40)
 Workflow->>+PaymentRestAPI: HTTP Request (2nd attempt)
-PaymentRestAPI->>+PaymentProcessor: Begin Processing
-PaymentProcessor->>-PaymentRestAPI: Payment Performed
+PaymentRestAPI->>+BalanceDatabase: Begin Processing
+BalanceDatabase->>-PaymentRestAPI: Payment Performed
 PaymentRestAPI->>-Workflow: HTTP Response
 end
 ```
@@ -683,21 +683,21 @@ participant Workflow
 end
 box rgb(40,40,40)
 participant PaymentRestAPI
-participant PaymentProcessor
+participant BalanceDatabase
 end
 rect rgb(40,60,40)
 Workflow->>+PaymentRestAPI: HTTP Request (1st attempt)
-PaymentRestAPI->>+PaymentProcessor: Begin Processing
-PaymentProcessor->>-PaymentRestAPI: Payment Performed 
+PaymentRestAPI->>+BalanceDatabase: Begin Processing
+BalanceDatabase->>-PaymentRestAPI: Payment Performed 
 end
 rect rgb(60,40,40)
 PaymentRestAPI->>-Workflow: HTTP Response
 end
 rect rgb(40,60,40)
 Workflow->>+PaymentRestAPI: HTTP Request (2nd attempt)
-PaymentRestAPI->>+PaymentProcessor: Request Payment
-PaymentProcessor->>PaymentProcessor: Skip as already processed
-PaymentProcessor->>-PaymentRestAPI: Payment Performed
+PaymentRestAPI->>+BalanceDatabase: Request Payment
+BalanceDatabase->>BalanceDatabase: Skip as already processed
+BalanceDatabase->>-PaymentRestAPI: Payment Performed
 PaymentRestAPI->>-Workflow: HTTP Response
 end
 ```
@@ -708,25 +708,57 @@ Using an idempotence key, the remote service is able to detect duplicated reques
 
 And Effect Cluster already provides you a deterministic execution id that can be used as idempotence key for your activities.
 There is also a method to access the current attempt number, in order to know if this is the first time that you are trying to execute your activity.
+-->
+---
+layout: image
+image: image-wf-update.gif
+---
 
-
-
-Fixing workflows:
-
+<!--
 We said before that usually workflows have activities that are eventually retried until they either succeed or timeout with a failure.
+But what happens if an activity is failing due to a bug in our code and is being retried forever? Are we doomed to fail it forever?
 
-But what happens if an activity is failing due to a bug in our code? Are we doomed to fail it forever?
+Thanks to the activity definition being idempotent, we can update of the activity definition without any worries.
+We can stop the workflow engine, update the activity definition, and then spin up the workflow engine again and see that now our workflow will eventually complete.
+-->
+---
 
-Thanks to the activity definition being idempotent, we can do an update of the activity definition without any worries.
+## Yielding workflow execution
+<br/>
 
-We can stop the workflow engine, update the activity definition, and then spin up the workflow engine again.
-
-So for activities is really easy.
+```ts{12-15}
+const getTotalAmount = (id: string) =>
+  pipe(
+    Http.request.get(`/get-total-amount/${id}`)
+    .pipe(
+      Http.client.fetchOk(),
+      Effect.andThen((response) => response.json),
+      Effect.retry(
+        Schedule.exponential(1000).pipe(
+          Schedule.compose(Schedule.recurs(32)),
+        ),
+      ),
+      Effect.catchAllCause(() => pipe(
+        Effect.logError("Something is wrong with the OrderAPI right now"),
+        Effect.zipRight(Workflow.yieldExecution)
+      ))
+    ),
+    Activity.make("get-amount-due", Schema.number, Schema.never)
+  )
+```
+<!--
+In order to catch such scenarios, you can also use Workflow.yieldExecution to effectfully pause the execution of the workflow.
+This can be really useful if you want to avoid forever-retries when you detect unexpected scenarios.
+Here for example we write out the error in the observability log, and pause the execution.
+The developer can receive a notification in such cases, and apply the needed fixes or system checks.
 
 What about fixing workflow code instead?
-
 That is a little more trickier, but not so much.
+-->
+---
 
+## Versioning workflows
+<!--
 Versioning workflows:
 
 As we said before, workflow definition code must be deterministic.
