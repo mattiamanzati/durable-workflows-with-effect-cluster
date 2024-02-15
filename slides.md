@@ -218,6 +218,20 @@ When interacting with different systems, like for example REST APIs, emails, etc
 
 External systems receive writes, and are not partecipant of the transaction.
 -->
+---
+layout: fact
+---
+## Distributed systems are everywhere
+
+<!--
+And it may seem strange, but this is not tied to having actual external system hosted on other servers you try to call.
+Let's say that you have a database with a product catalog, and in a database you store the sku, the name of the product and the name of an image for the catalog.
+The actual image is stored into the filesystem.
+
+Trying to perform a delete of all the products in the catalog is a distributed workflow.
+It involves two different systems, the database and the filesystem.
+And you need to ensure that you either delete both the record on the database and the image, or you keep both of them.
+-->
 
 ---
 layout: fact
@@ -227,7 +241,7 @@ layout: fact
 All the building blocks you need to deal with distributed workflows with ease!
 
 <!--
-As we've just seen building workflow that deal with external systems can be quite a pain.
+So dealing with distributed systems can be quite a pain.
 And that's why we started building Effect Cluster, a library that helps you by providing all the basic building blocks you need in order to create and orchestrate your distributed workflows.
 -->
 
@@ -757,20 +771,81 @@ That is a little more trickier, but not so much.
 -->
 ---
 
-## Versioning workflows
+
+## Fixing workflows
+
+```ts{all}
+const processPaymentWorkflow = Workflow.make(
+  ProcessPaymentRequest,
+  (_) => "ProcessPayment@" + _.orderId,
+  ({ cardNumber, deliveryAddress, email, orderId }) =>
+    Effect.gen(function*(_) {
+      const totalAmount = yield* _(getTotalAmount(orderId))
+      yield* _(chargeCreditCard(cardNumber, totalAmount))
+      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
+      yield* _(sendOrderToShipping(orderId, trackingId))
+      yield* _(sendConfirmationEmail(email, orderId, trackingId))
+    })
+)
+```
 <!--
-Versioning workflows:
 
 As we said before, workflow definition code must be deterministic.
+This means that we can fix running workflows, as long we don't break too much the determinism.
+We can for example use an activity to store the version for the workflow when started, and use conditional logic based on that.
+-->
+---
+layout: fact
+---
 
+## All or Nothing
 
+<!--
+As we said before when speaking about the Saga paper, we said that we want the guarantee that either we perform all step successfully, or we abort everything as it never happened.
+Up to now we spoke about using workflows to retry indefinitely some activities until they succeed.
+But what to do if we have a failure downstream?
 
+What do we do if for example after we charged the credit card we found out we are out of stock and there is no way to have more stock?
+This is a common case when you have for example airplane tickets, and the amount of seats is limited.
+-->
 
+---
 
-Activities can be interrupted either if we request to kill the entire workflow, or just to perform a graceful restart of the WorkflowEngine.
-In case of a graceful restart of the workflow engine, you can detect that by using WorkflowContext.isGracefulShutdown
+## Compensating actions
 
-We can see that an activity is just a regular Effect, that requires in its env a WorkflowContext.
+```ts{all}
+const processPaymentWorkflow = Workflow.make(
+  ProcessPaymentRequest,
+  (_) => "ProcessPayment@" + _.orderId,
+  ({ cardNumber, deliveryAddress, email, orderId }) =>
+    pipe(
+      getTotalAmount(orderId),
+      Effect.flatMap(totalAmount => pipe(
+        chargeCreditCard(cardNumber, totalAmount),
+        Effect.flatMap(() => createShippingTrackingCode(deliveryAddress)),
+        Effect.tap(trackingId => sendOrderToShipping(orderId, trackingId)),
+        Effect.tap(trackingId => sendConfirmationEmail(email, orderId, trackingId)),
+        Effect.catchTag("OutOfStockError", () => refundCreditCard(cardNumber, totalAmount))
+      ))
+    )
+)
+```
 
-Yield inside a workflow.
+<!--
+Cluster workflow supports all the effect semantics in a durable manner.
+That means you can use APIs like catchTag to recover in case of error, and process a refund if the airplane is fully booked.
+The refundCreditCard is an activity as well, that means that can be retried forever.
+
+This way our workflow has granted a all or nothing semantic by using "compensating activities" that revert the changes performed by an activity.
+The refundCreditCard is the compensating action for chargeCreditCard.
+-->
+
+---
+
+## Just workflows?
+
+<!--
+We've seen how effect cluster allowed us to write durable and resilient workflows by using regular effect code.
+To some extends the workflow code we've seen is can be seen as just regular effects.
+Bus is that all?
 -->
