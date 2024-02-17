@@ -237,6 +237,12 @@ And you need to ensure that you either delete both the record on the database an
 layout: fact
 ---
 
+The user is a system as well
+
+---
+layout: fact
+---
+
 ## Welcome Effect Cluster
 All the building blocks you need to deal with distributed workflows with ease!
 
@@ -847,5 +853,12 @@ The refundCreditCard is the compensating action for chargeCreditCard.
 <!--
 We've seen how effect cluster allowed us to write durable and resilient workflows by using regular effect code.
 To some extends the workflow code we've seen is can be seen as just regular effects.
-Bus is that all?
+But is that all?
+
+We now have a set of workflow definitions and instances that are built in a way they are fine with dying, and coming back as necessary.
+We also listed a lot of use cases where we may need a distributed workflow, so maybe a single server instance running both all of our workflows and our APIs is not the best.
+
+But that opens up a new can filled with problems.
+How do we ensure that a single workflow instance is running only and exaclty once in the whole set of servers?
+
 -->
