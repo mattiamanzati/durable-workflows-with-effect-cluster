@@ -779,6 +779,7 @@ That is a little more trickier, but not so much.
 
 
 ## Fixing workflows
+<br/>
 
 ```ts{all}
 const processPaymentWorkflow = Workflow.make(
@@ -818,6 +819,7 @@ This is a common case when you have for example airplane tickets, and the amount
 ---
 
 ## Compensating actions
+<br/>
 
 ```ts{all}
 const processPaymentWorkflow = Workflow.make(
@@ -847,18 +849,79 @@ The refundCreditCard is the compensating action for chargeCreditCard.
 -->
 
 ---
+layout: fact
+---
 
-## Just workflows?
+## Effect Cluster Workflows
+Building durable and reliable Effects for your applications
 
 <!--
 We've seen how effect cluster allowed us to write durable and resilient workflows by using regular effect code.
 To some extends the workflow code we've seen is can be seen as just regular effects.
-But is that all?
+-->
 
-We now have a set of workflow definitions and instances that are built in a way they are fine with dying, and coming back as necessary.
+---
+
+## Scaling the system
+```mermaid { scale: 0.4 }
+     C4Context
+      Container_Boundary(c1, "Server") {
+        System(ApiGateway, "API Gateway", "Exposes REST APIs to interact with the system")
+        System(WorkflowEngine1, "ProcessPaymentWorkflow", "ProcessPayment@Order-01")
+        System(WorkflowEngine2, "ProcessPaymentWorkflow", "ProcessPayment@Order-02")
+        System(WorkflowEngine4, "ProcessPaymentWorkflow", "ProcessPayment@Order-03")
+      }
+```
+
+<!--
 We also listed a lot of use cases where we may need a distributed workflow, so maybe a single server instance running both all of our workflows and our APIs is not the best.
 
-But that opens up a new can filled with problems.
-How do we ensure that a single workflow instance is running only and exaclty once in the whole set of servers?
+If for some reason the single server instance has network problems or is struggling to perform its work that could be a problem.
+So maybe we can spin up multiple servers to run our workflows?
+-->
 
+---
+
+### Ensuring only one execution of each workflow instance
+
+```mermaid { scale: 0.4 }
+     C4Context
+      Container_Boundary(c1, "API Server") {
+        System(ApiGateway, "API Gateway", "Exposes REST APIs to interact with the system")
+      }
+      Container_Boundary(WorkflowServer1, "Workflow Server 1") {
+        System(WorkflowEngine1, "ProcessPaymentWorkflow", "ProcessPayment@Order-01")
+        System(WorkflowEngine2, "ProcessPaymentWorkflow", "ProcessPayment@Order-02")
+      }
+      Container_Boundary(WorkflowServer2, "Workflow Server 2") {
+        System(WorkflowEngine3, "ProcessPaymentWorkflow", "ProcessPayment@Order-02")
+        System(WorkflowEngine4, "ProcessPaymentWorkflow", "ProcessPayment@Order-03")
+      }
+
+      Rel(ApiGateway, WorkflowEngine2, "Uses")
+      Rel(ApiGateway, WorkflowEngine3, "Uses")
+```
+
+<!--
+Yeah, that may work, but opens up to some problems.
+How do we ensure that the workflow instance processing a payment is not performed on two different servers at the same time?
+
+Sure, you can use a global lock to ensure that only once is executed, but is it the best way?
+Using a global lock would result in a central point of failure, that will also reduce the throughtput of your system.
+
+But what are the alternatives?
+-->
+
+---
+layout: fact
+---
+
+## Effect Cluster Sharding and Location Transparency
+Safely distribute work and refer to entity without knowing their location
+
+<!--
+That's why Effect Cluster also includes a sharding and location transparency set of utilities in order to build a cluster of server that share workloads of entities to process.
+
+We've seen how effect cluster allowed us to write durable and resilient workflows by using regular effect code.
+To some extends the workflow code we've seen is can be seen as just regular effects.
 -->
