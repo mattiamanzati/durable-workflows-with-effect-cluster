@@ -863,7 +863,9 @@ To some extends the workflow code we've seen is can be seen as just regular effe
 ---
 
 ## Scaling the system
-```mermaid { scale: 0.4 }
+<br/>
+
+```mermaid { scale: 0.35 }
      C4Context
       Container_Boundary(c1, "Server") {
         System(ApiGateway, "API Gateway", "Exposes REST APIs to interact with the system")
@@ -883,8 +885,9 @@ So maybe we can spin up multiple servers to run our workflows?
 ---
 
 ### Ensuring only one execution of each workflow instance
+<br/>
 
-```mermaid { scale: 0.4 }
+```mermaid { scale: 0.35 }
      C4Context
       Container_Boundary(c1, "API Server") {
         System(ApiGateway, "API Gateway", "Exposes REST APIs to interact with the system")
@@ -913,6 +916,47 @@ But what are the alternatives?
 -->
 
 ---
+
+## The restaurant problem
+<br/>
+
+- Table 1: Waiter Mattia
+- Table 2: Waiter Mattia
+- Table 3: Waiter Mattia
+- Table 4: Waiter Mattia
+- Table 5: Waiter Mattia
+- Table 6: Waiter Mattia
+
+<!--
+Let's see the same problem in a real world scenario.
+
+Let's imagine we have a restaurant with 30 tables for two people and a single waiter.
+The waiter will take the orders for all the tables, but that will take a lot of time for him to process all of the tables by himself.
+
+The restaurant owner decides to introduce a new waiter to help the first one take all the orders.
+But how does the restaurant ensures that all tables will have their order taken and no order will be taken twice?
+-->
+
+---
+
+## Tables sharding
+<br/>
+
+- Table 1: Waiter Mattia
+- Table 2: Waiter Mattia
+- Table 3: Waiter Mattia
+- Table 4: Waiter Michael
+- Table 5: Waiter Michael
+- Table 6: Waiter Michael
+
+<!--
+We can simply decide upfront that the tables from 1 to 3 will be processed by the first waiter, and the others from the second waiter.
+When a couple seats at one table, there is no need for one waiter to ask the other if the order has already been taken.
+Everyone knows upfront the sets of tables they are in charge, and we can decide assignments for whatever number of tables and waiters we have.
+
+-->
+
+---
 layout: fact
 ---
 
@@ -920,8 +964,11 @@ layout: fact
 Safely distribute work and refer to entity without knowing their location
 
 <!--
-That's why Effect Cluster also includes a sharding and location transparency set of utilities in order to build a cluster of server that share workloads of entities to process.
+The pattern we've just seen is called sharding, and Effect Cluster also includes a sharding and location transparency set of utilities in order to build a cluster of server that share workloads of entities to process.
+-->
+---
 
+<!--
 We've seen how effect cluster allowed us to write durable and resilient workflows by using regular effect code.
 To some extends the workflow code we've seen is can be seen as just regular effects.
 -->
