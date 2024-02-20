@@ -221,6 +221,7 @@ External systems receive writes, and are not partecipant of the transaction.
 ---
 layout: fact
 ---
+
 ## Distributed systems are everywhere
 
 <!--
@@ -232,12 +233,6 @@ Trying to perform a delete of all the products in the catalog is a distributed w
 It involves two different systems, the database and the filesystem.
 And you need to ensure that you either delete both the record on the database and the image, or you keep both of them.
 -->
-
----
-layout: fact
----
-
-The user is a system as well
 
 ---
 layout: fact
@@ -966,9 +961,101 @@ Safely distribute work and refer to entity without knowing their location
 <!--
 The pattern we've just seen is called sharding, and Effect Cluster also includes a sharding and location transparency set of utilities in order to build a cluster of server that share workloads of entities to process.
 -->
+
+---
+layout: image
+image: /sharding-balancing.gif
 ---
 
 <!--
-We've seen how effect cluster allowed us to write durable and resilient workflows by using regular effect code.
-To some extends the workflow code we've seen is can be seen as just regular effects.
+Cluster Sharding is all about building entities that live across different processes and communicate with each other by just knowing the entity ID.
+In order to do so, there is a shard manager that behaves in the same way the restaurant owner did, assigning ranges of entities IDs to each cluster partecipant. Each time a new partecipant appears or disappears, the assignments are rebalanced across all remaining members.
 -->
+
+---
+
+```ts
+import * as RecipientType from "@effect/cluster/RecipientType"
+import * as Schema from "@effect/schema/Schema"
+
+export class Increment extends Schema.TaggedClass<Increment>()("Increment", {
+  messageId: Schema.string
+}) {}
+
+export class Decrement extends Schema.TaggedClass<Decrement>()("Decrement", {
+  messageId: Schema.string
+}) {}
+
+export class GetCurrent extends 
+  Schema.TaggedRequest<GetCurrent>()("GetCurrent", Schema.never, Schema.number, {
+  messageId: Schema.string
+}) {}
+
+export const CounterMsg = Schema.union(Increment, Decrement, GetCurrent)
+export type CounterMsg = Schema.Schema.To<typeof CounterMsg>
+
+export const CounterEntity = RecipientType.makeEntityType("Counter", CounterMsg, (_) => _.messageId)
+```
+
+<!--
+Sharding is not tied to just executing workflows.
+That means you are also free to define your own messages using Effect Schema in the same way we defined before the request to start a workflow.
+-->
+
+---
+
+```ts
+Sharding.registerEntity(
+  CounterEntity
+)(
+  RecipientBehaviour.fromFunctionEffectStateful(
+    () => Effect.succeed(0),
+    (_, message, stateRef) => {
+      switch (message._tag) {
+        case "Increment":
+          return pipe(Ref.update(stateRef, (count) => count + 1), Effect.as(MessageState.Processed(Option.none())))
+        case "Decrement":
+          return pipe(Ref.update(stateRef, (count) => count - 1), Effect.as(MessageState.Processed(Option.none())))
+        case "GetCurrent":
+          return pipe(
+            Ref.get(stateRef),
+            Effect.exit,
+            Effect.map((result) => MessageState.Processed(Option.some(result)))
+          )
+      }
+    }
+  )
+)
+```
+
+<!--
+Once we defined the message protocol, we can define a behaviour that recives the messages and perform any logic you want based on the message.
+It can start the execution of a single instance of a workflow as we have seen before, or it can be any arbitrary logic you want.
+-->
+
+---
+layout: two-cols-header
+---
+## Today's Recap
+<br/>
+
+Effect cluster provides all the basic building blocks you'll need to build distributed workflows and systems
+
+::left::
+`@effect/cluster`
+- Sharding
+- Shard Manager
+- Messaging utilities
+
+`@effect/cluster-node`
+- Cluster specific utilities for NodeJS
+
+::right::
+
+`@effect/cluster-workflow`
+- Activity
+- Workflow
+- WorkflowEngine
+
+`@effect/cluster-pg`
+- Postgres based persistency for Workflow and Sharding
