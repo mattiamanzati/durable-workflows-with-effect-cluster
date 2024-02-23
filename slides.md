@@ -227,6 +227,12 @@ And you need to ensure that you either delete both the record on the database an
 layout: fact
 ---
 
+## Distributed Workflows are everywhere
+
+---
+layout: fact
+---
+
 ## Welcome Effect Cluster
 All the building blocks you need to deal with distributed workflows with ease!
 
