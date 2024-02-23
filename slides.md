@@ -38,27 +38,9 @@ image: /image-me.jpg
 - This picture is not stack safe
 
 ---
-
-## Everyday Code
-<br/>
-
-```ts{all}
-const processPayment = 
-  (cardNumber: CardNumber, deliveryAddress: DeliveryAddress, 
-  email: EmailAddress, orderId: OrderId) =>
-    Effect.gen(function*(_) {
-      // get total order amount
-      const totalAmount = yield* _(getTotalAmount(orderId))
-      // charge the credit card
-      yield* _(chargeCreditCard(cardNumber, totalAmount))
-      // create a tracking id
-      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
-      // send the order to shipment
-      yield* _(sendOrderToShipping(orderId, trackingId))
-      // send a confirmation email
-      yield* _(sendConfirmationEmail(email, orderId, trackingId))
-    })
-```
+layout: image
+image: /wf-example.png
+---
 
 <!--
 We've all had to deal with a computation like this at least once in your lifetime.
@@ -113,14 +95,15 @@ But what do we do with those errors? How should we handle them? Just letting the
 const processPayment = 
   (cardNumber: CardNumber, deliveryAddress: DeliveryAddress, 
   email: EmailAddress, orderId: OrderId) =>
-    Effect.gen(function*(_) {
-      const totalAmount = yield* _(getTotalAmount(orderId))
-      yield* _(chargeCreditCard(cardNumber, totalAmount))
-      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
+    Effect.gen(function*($) {
+      const totalAmount = yield* $(getTotalAmount(orderId))
+      yield* $(chargeCreditCard(cardNumber, totalAmount))
+      const trackingId = yield* $(createShippingTrackingCode(deliveryAddress))
       // ^- failure raised here!
-      yield* _(sendOrderToShipping(orderId, trackingId)) // skipped
-      yield* _(sendConfirmationEmail(email, orderId, trackingId)) // skipped
+      yield* $(sendOrderToShipping(orderId, trackingId)) // skipped
+      yield* $(sendConfirmationEmail(email, orderId, trackingId)) // skipped
     })
+
 ```
 <!--
 Ok, let's say we start very simple, and we just bounce back the error to the user into some fancy UI.
@@ -141,13 +124,13 @@ This way we potentially get out of our error list all of those errors that are t
 const processPayment = 
   (cardNumber: CardNumber, deliveryAddress: DeliveryAddress, 
   email: EmailAddress, orderId: OrderId) =>
-    Effect.gen(function*(_) {
-      const totalAmount = yield* _(getTotalAmount(orderId))
-      yield* _(chargeCreditCard(cardNumber, totalAmount))
-      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
+    Effect.gen(function*($) {
+      const totalAmount = yield* $(getTotalAmount(orderId))
+      yield* $(chargeCreditCard(cardNumber, totalAmount))
+      const trackingId = yield* $(createShippingTrackingCode(deliveryAddress))
       // ^- failure raised here!
-      yield* _(sendOrderToShipping(orderId, trackingId)) // skipped
-      yield* _(sendConfirmationEmail(email, orderId, trackingId)) // skipped
+      yield* $(sendOrderToShipping(orderId, trackingId)) // skipped
+      yield* $(sendConfirmationEmail(email, orderId, trackingId)) // skipped
     }).pipe(
       Effect.retry({
         while: error => isTemporaryError(error)
@@ -386,24 +369,23 @@ layout: two-cols
 
 ::right::
 
-```ts{all|14|15|16-17|3-12}
+```ts{all|3|4|5-6|8-17}
 const getTotalAmount = (id: string) =>
-  pipe(
-    Http.request.get(`/get-total-amount/${id}`)
-    .pipe(
+Activity.make(
+    `get-amount-due-${id}`, // identifier
+    Schema.number, // success schema
+    Schema.struct({ code: Schema.number, 
+      message: Schema.string }) // error schema
+  )(
+    pipe(
+      Http.request.get(`/get-total-amount/${id}`)
       Http.client.fetchOk(),
       Effect.andThen((response) => response.json),
       Effect.mapError(() => ({ 
         code: 500, 
-        message: "API Fetch error" 
+        message: `API Fetch error`
         })
       )
-    ),
-    Activity.make(
-      `get-amount-due-${id}`, // identifier
-      Schema.number, // success schema
-      Schema.struct({ code: Schema.number, 
-        message: Schema.string }) // error schema
     )
   )
 ```
@@ -432,9 +414,9 @@ layout: two-cols
 ::right::
 
 ```ts
-class ProcessPaymentRequest 
-  extends Schema.TaggedRequest<ProcessPaymentRequest>()(
-  "ProcessPaymentRequest",
+class ProcessPaymentRequest extends 
+  Schema.TaggedRequest<ProcessPaymentRequest>()(
+  `ProcessPaymentRequest`, // tag
   Schema.never, // failure
   Schema.boolean, // success
   {
@@ -461,14 +443,14 @@ layout: two-cols-header
 ```ts{all}
 const processPaymentWorkflow = Workflow.make(
   ProcessPaymentRequest,
-  (_) => "ProcessPayment@" + _.orderId,
+  (_) => `ProcessPayment@${_.orderId}`,
   ({ cardNumber, deliveryAddress, email, orderId }) =>
-    Effect.gen(function*(_) {
-      const totalAmount = yield* _(getTotalAmount(orderId))
-      yield* _(chargeCreditCard(cardNumber, totalAmount))
-      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
-      yield* _(sendOrderToShipping(orderId, trackingId))
-      yield* _(sendConfirmationEmail(email, orderId, trackingId))
+    Effect.gen(function*($) {
+      const totalAmount = yield* $(getTotalAmount(orderId))
+      yield* $(chargeCreditCard(cardNumber, totalAmount))
+      const trackingId = yield* $(createShippingTrackingCode(deliveryAddress))
+      yield* $(sendOrderToShipping(orderId, trackingId))
+      yield* $(sendConfirmationEmail(email, orderId, trackingId))
     })
 )
 ```
@@ -528,12 +510,12 @@ const processPaymentWorkflow = Workflow.make(
   ProcessPaymentRequest,
   (_) => "ProcessPayment@" + _.orderId,
   ({ cardNumber, deliveryAddress, email, orderId }) =>
-    Effect.gen(function*(_) {
-      const totalAmount = yield* _(Effect.succeed(42.1) /* getTotalAmount(orderId) */) 
-      yield* _(Effect.unit /* chargeCreditCard(cardNumber, totalAmount) */)
-      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
-      yield* _(sendOrderToShipping(orderId, trackingId))
-      yield* _(sendConfirmationEmail(email, orderId, trackingId))
+    Effect.gen(function*($) {
+      const totalAmount = yield* $(Effect.succeed(42.1) /* getTotalAmount(orderId) */) 
+      yield* $(Effect.unit /* chargeCreditCard(cardNumber, totalAmount) */)
+      const trackingId = yield* $(createShippingTrackingCode(deliveryAddress))
+      yield* $(sendOrderToShipping(orderId, trackingId))
+      yield* $(sendConfirmationEmail(email, orderId, trackingId))
     })
 )
 ```
@@ -551,10 +533,10 @@ Does that mean that you cannot perform non-deterministic work? No, it just needs
 ## Running a Workflow
 
 ```ts{all}
-const main = Effect.gen(function*(_) {
+const main = Effect.gen(function*($) {
   const workflows = Workflow.union(processPaymentWorkflow, requestRefundWorkflow)
-  const engine = yield* _(WorkflowEngine.makeScoped(workflows)) 
-  yield* _(
+  const engine = yield* $(WorkflowEngine.makeScoped(workflows)) 
+  yield* $(
     engine.sendDiscard(
       new ProcessPaymentRequest({
         orderId: "order-1",
@@ -781,15 +763,23 @@ That is a little more trickier, but not so much.
 ```ts{all}
 const processPaymentWorkflow = Workflow.make(
   ProcessPaymentRequest,
-  (_) => "ProcessPayment@" + _.orderId,
+  (_) => `ProcessPayment@${_.orderId}`,
   ({ cardNumber, deliveryAddress, email, orderId }) =>
-    Effect.gen(function*(_) {
-      const totalAmount = yield* _(getTotalAmount(orderId))
-      yield* _(chargeCreditCard(cardNumber, totalAmount))
-      const trackingId = yield* _(createShippingTrackingCode(deliveryAddress))
-      yield* _(sendOrderToShipping(orderId, trackingId))
-      yield* _(sendConfirmationEmail(email, orderId, trackingId))
+    Effect.gen(function*($) {
+      const version = yield* $(getCurrentVersion(2))
+      // ^- for already running WFs, will resolve with previous value (1)
+      // ...
+      if(version >= 2){
+        yield* $(checkTrustedCardNumber(cardNumber))
+      }
+      yield* $(chargeCreditCard(cardNumber, totalAmount))
+      // ...
     })
+)
+
+const getCurrentVersion = (definitionVersion: number) => pipe(
+  Effect.succeed(definitionVersion),
+  Activity.make("get-current-version", Schema.number, Schema.void)
 )
 ```
 <!--
@@ -821,7 +811,7 @@ This is a common case when you have for example airplane tickets, and the amount
 ```ts{all}
 const processPaymentWorkflow = Workflow.make(
   ProcessPaymentRequest,
-  (_) => "ProcessPayment@" + _.orderId,
+  (_) => `ProcessPayment@${_.orderId}`,
   ({ cardNumber, deliveryAddress, email, orderId }) =>
     pipe(
       getTotalAmount(orderId),
@@ -858,19 +848,9 @@ To some extends the workflow code we've seen is can be seen as just regular effe
 -->
 
 ---
-
-## Scaling the system
-<br/>
-
-```mermaid { scale: 0.45 }
-     C4Context
-      Container_Boundary(c1, "Server") {
-        System(ApiGateway, "API Gateway", "Exposes REST APIs to interact with the system")
-        System(WorkflowEngine1, "ProcessPaymentWorkflow", "ProcessPayment@Order-01")
-        System(WorkflowEngine2, "ProcessPaymentWorkflow", "ProcessPayment@Order-02")
-        System(WorkflowEngine4, "ProcessPaymentWorkflow", "ProcessPayment@Order-03")
-      }
-```
+layout: image
+image: /wf-server.png
+---
 
 <!--
 We also listed a lot of use cases where we may need a distributed workflow, so maybe a single server instance running both all of our workflows and our APIs is not the best.
@@ -880,27 +860,9 @@ So maybe we can spin up multiple servers to run our workflows?
 -->
 
 ---
-
-### Ensuring only one execution of each workflow instance
-<br/>
-
-```mermaid { scale: 0.35 }
-     C4Context
-      Container_Boundary(c1, "API Server") {
-        System(ApiGateway, "API Gateway", "Exposes REST APIs to interact with the system")
-      }
-      Container_Boundary(WorkflowServer1, "Workflow Server 1") {
-        System(WorkflowEngine1, "ProcessPaymentWorkflow", "ProcessPayment@Order-01")
-        System(WorkflowEngine2, "ProcessPaymentWorkflow", "ProcessPayment@Order-02")
-      }
-      Container_Boundary(WorkflowServer2, "Workflow Server 2") {
-        System(WorkflowEngine3, "ProcessPaymentWorkflow", "ProcessPayment@Order-02")
-        System(WorkflowEngine4, "ProcessPaymentWorkflow", "ProcessPayment@Order-03")
-      }
-
-      Rel(ApiGateway, WorkflowEngine2, "Uses")
-      Rel(ApiGateway, WorkflowEngine3, "Uses")
-```
+layout: image
+image: /wf-cluster.png
+---
 
 <!--
 Yeah, that may work, but opens up to some problems.
@@ -913,16 +875,10 @@ But what are the alternatives?
 -->
 
 ---
-
-## The restaurant problem
-<br/>
-
-- Table 1: Waiter Mattia
-- Table 2: Waiter Mattia
-- Table 3: Waiter Mattia
-- Table 4: Waiter Mattia
-- Table 5: Waiter Mattia
-- Table 6: Waiter Mattia
+layout: image
+image: /tables-single.png
+transition: fade
+---
 
 <!--
 Let's see the same problem in a real world scenario.
@@ -935,22 +891,38 @@ But how does the restaurant ensures that all tables will have their order taken 
 -->
 
 ---
-
-## Tables sharding
-<br/>
-
-- Table 1: Waiter Mattia
-- Table 2: Waiter Mattia
-- Table 3: Waiter Mattia
-- Table 4: Waiter Michael
-- Table 5: Waiter Michael
-- Table 6: Waiter Michael
+layout: image
+image: /tables-double.png
+transition: fade
+---
 
 <!--
 We can simply decide upfront that the tables from 1 to 3 will be processed by the first waiter, and the others from the second waiter.
 When a couple seats at one table, there is no need for one waiter to ask the other if the order has already been taken.
 Everyone knows upfront the sets of tables they are in charge, and we can decide assignments for whatever number of tables and waiters we have.
+-->
 
+
+---
+layout: image
+image: /tables-died.png
+transition: fade
+---
+
+<!--
+If for some reason one of the workers dies, the restaurant owner assigns again the tables to the living waiters so we ensure that every table is assigned to a waiter.
+Then if somehow the worker comes to live again, the restaurant owner assign back some tables to the worker.
+-->
+
+---
+layout: image
+image: /tables-resurrected.png
+transition: fade
+---
+
+<!--
+If for some reason one of the workers dies, the restaurant owner assigns again the tables to the living waiters so we ensure that every table is assigned to a waiter.
+Then if somehow the worker comes to live again, the restaurant owner assign back some tables to the worker.
 -->
 
 ---
@@ -1106,4 +1078,102 @@ Let's start by putting on some naming convention.
 
 From now on we'll call Activity the single step.
 A workflow is then just the logic glue that ties together a sequence of activities.
+-->
+
+---
+
+## Everyday Code
+<br/>
+
+```ts{all}
+const processPayment = 
+  (cardNumber: CardNumber, deliveryAddress: DeliveryAddress, 
+  email: EmailAddress, orderId: OrderId) =>
+    Effect.gen(function*($) {
+      // get total order amount
+      const totalAmount = yield* $(getTotalAmount(orderId))
+      // charge the credit card
+      yield* $(chargeCreditCard(cardNumber, totalAmount))
+      // create a tracking id
+      const trackingId = yield* $(createShippingTrackingCode(deliveryAddress))
+      // send the order to shipment
+      yield* $(sendOrderToShipping(orderId, trackingId))
+      // send a confirmation email
+      yield* $(sendConfirmationEmail(email, orderId, trackingId))
+    })
+```
+
+<!--
+We've all had to deal with a computation like this at least once in your lifetime.
+And I am sure that even today in some point of your application you indeed have one like this in production.
+Sure, the domain of your problem may change a little, maybe its not processing a payment, but let's take this as today's example.
+
+Let's see what happens step by step.
+
+We first get back from the order the total amount that is due to the products in the order.
+Once we've done that, we process the payment through our payment gateway.
+And finally, we create a trackingId for the shipping, tell the warehouse that the order can be shipped, and send a confirmation email to the user that also contains the tracking id.
+
+There is a lot going on in here.
+But can you spot the problem we have in our code?
+
+The real problem here is that we have a complex workflow that may branch in different ways we need to manage.
+And there may be some failures along the way.
+Sure the happy path is pretty clear, but what happens if something fails?
+-->
+
+
+---
+
+## Scaling the system
+<br/>
+
+```mermaid { scale: 0.45 }
+     C4Context
+      Container_Boundary(c1, "Server") {
+        System(ApiGateway, "API Gateway", "Exposes REST APIs to interact with the system")
+        System(WorkflowEngine1, "ProcessPaymentWorkflow", "ProcessPayment@Order-01")
+        System(WorkflowEngine2, "ProcessPaymentWorkflow", "ProcessPayment@Order-02")
+        System(WorkflowEngine4, "ProcessPaymentWorkflow", "ProcessPayment@Order-03")
+      }
+```
+
+<!--
+We also listed a lot of use cases where we may need a distributed workflow, so maybe a single server instance running both all of our workflows and our APIs is not the best.
+
+If for some reason the single server instance has network problems or is struggling to perform its work that could be a problem.
+So maybe we can spin up multiple servers to run our workflows?
+-->
+
+---
+
+### Ensuring only one execution of each workflow instance
+<br/>
+
+```mermaid { scale: 0.35 }
+     C4Context
+      Container_Boundary(c1, "API Server") {
+        System(ApiGateway, "API Gateway", "Exposes REST APIs to interact with the system")
+      }
+      Container_Boundary(WorkflowServer1, "Workflow Server 1") {
+        System(WorkflowEngine1, "ProcessPaymentWorkflow", "ProcessPayment@Order-01")
+        System(WorkflowEngine2, "ProcessPaymentWorkflow", "ProcessPayment@Order-02")
+      }
+      Container_Boundary(WorkflowServer2, "Workflow Server 2") {
+        System(WorkflowEngine3, "ProcessPaymentWorkflow", "ProcessPayment@Order-02")
+        System(WorkflowEngine4, "ProcessPaymentWorkflow", "ProcessPayment@Order-03")
+      }
+
+      Rel(ApiGateway, WorkflowEngine2, "Uses")
+      Rel(ApiGateway, WorkflowEngine3, "Uses")
+```
+
+<!--
+Yeah, that may work, but opens up to some problems.
+How do we ensure that the workflow instance processing a payment is not performed on two different servers at the same time?
+
+Sure, you can use a global lock to ensure that only once is executed, but is it the best way?
+Using a global lock would result in a central point of failure, that will also reduce the throughtput of your system.
+
+But what are the alternatives?
 -->
