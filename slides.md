@@ -13,6 +13,8 @@ download: true
 canvasWidth: 850
 ---
 
+## Durable Workflows 
+### with Effect Cluster
 
 ---
 layout: fact
@@ -97,6 +99,8 @@ const processPayment: Effect<
 
 Effect is a tool that is of great help with this, and as long correctly define each building block, the effect datatype let the possible errors pass through so we can handle them.
 
+We have domain errors, network errors, temporary errors, everything.
+
 But what do we do with those errors? How should we handle them? Just letting the list growing is not an option.
 -->
 
@@ -123,6 +127,9 @@ Ok, let's say we start very simple, and we just bounce back the error to the use
 
 What happens if the workflows succefully registers the order, process the payment and then fail to create the tracking id due to the hourly quota being exausted? 
 The user will indeed see a fancy error page saying "Oops, you exausted your API quota", but what will happen to the just received order? Will it be processed anyway? Will it be clear to the purchasing user that he does not need to do anything because the order has been received anyway?
+
+Most of the errors we have here will take care of themselves just with time right? So why not just try again?
+This way we potentially get out of our error list all of those errors that are temporary.
 -->
 
 ---
@@ -148,8 +155,6 @@ const processPayment =
     )
 ```
 <!--
-Most of the errors we have here will take care of themselves just with time right? So why not just try again?
-This way we potentially get out of our error list all of those errors that are temporary.
 
 Sure, effect is great because inside its computation primitive retries are already a built in concept, so maybe what we can do upon an error is simply attempt to perform again the entire workflow right?
 We can simply toss in a retry policy over the entire workflow and that's it.
@@ -169,7 +174,7 @@ In any business process when we have an error we need to handle it or retry it i
 
 ```mermaid
 sequenceDiagram
-box rgb(40,40,40) Request
+box rgb(40,40,40) Process
 participant ProcessPayment
 participant OrderAPI 
 participant PaymentGateway
@@ -192,7 +197,8 @@ They have to perform everything and work inside the request, because it's all in
 
 So what happens if due to retries on temporary onavailable system the business process is taking hours or even days to complete?
 What happens to our business process if for some reason we have to restart or kill our server due to an update?
-Our local retries won't help here, as the process will be completely restarted from the first step upon server restart.
+
+Our local retries won't help here, as the process will be completely restarted from the first step upon server restart leaving everything in a dirty state.
 
 -->
 
@@ -259,13 +265,45 @@ image: /image-saga.png
 
 
 <!--
-One of the concept that helped shaping up Effect Cluster is the concept of a Saga.
+One of the concept that helped shaping up Durable Workflows in Effect Cluster is the concept of a Saga.
 
-The concept of Saga cames from a really old paper and back in the days it tried to solve a really similar yet different problem problem.
+The concept of Saga cames from a really old paper and back in the days it tried to solve a really similar yet different problem.
 
 Basically they had this heavy computations that would hold onto a database transaction for a really long time, until finished, and this prevented any other smaller transaction to be performed, making the system completely unresponsive.
 
-And as we are now, they were looking for a way that even across server restarts, the system will eventually complete the execution of all of the steps, or revert completely as it never happened in the same way a single acid transaction would behaved.
+And as we are now, they were looking for a way to have a guaranteed that the system will eventually complete the execution of all of the steps, or revert completely as it never happened in the same way a single acid transaction would behaved, without using a long database transaction.
+-->
+
+---
+
+```mermaid
+sequenceDiagram
+participant ProcessPayment
+participant OrderTable 
+participant PaymentsTable
+participant ShippingTable
+participant NotificationsTable
+rect rgb(40,40,40)
+ProcessPayment->>+OrderTable: Transaction 1
+end
+rect rgb(60,60,60)
+ProcessPayment->>PaymentsTable: Transaction 2
+end
+rect rgb(40,40,40)
+ProcessPayment->>+ShippingTable: Transaction 3
+end
+rect rgb(60,60,60)
+ProcessPayment->>OrderTable: Transaction 4
+end
+rect rgb(40,40,40) 
+ProcessPayment->>NotificationsTable: Transaction 5
+end
+```
+
+<!--
+
+The idea is, instead of having a big long transaction that spans the entire flow, you could actually break it up into many smaller transaction, and perform them one after the other, and they are hold on together by some kind of messaging or signaling.
+
 -->
 
 ---
@@ -297,11 +335,8 @@ end
 ```
 
 <!--
-
-The idea is, instead of having a big long process that spans the entire flow of multiple steps that could involve external systems as we have seen before, you could actually break it up into many smaller steps, and perform them one after the other, and they are hold on together by some kind of messaging or signaling.
-
-Some kind of persistence will record the interactions between the ProcessPayment and the external systems, by storing in a durable record the attempts to call the external systems and the eventual result they returned.
-
+And even if we don't have actual database transactions, the same applies here for our use case!
+Each external system invocation can be indeed considered a transaction.
 -->
 ---
 
@@ -331,41 +366,11 @@ ProcessPayment->>EmailAPI: sendConfirmationEmail(email, orderId, trackingId)
 end
 ```
 <!--
-Thanks to this durable log, if the execution is retried after a server restart or a regular retry, the ProcessPayment workflow can skip altogether the already performed steps, and resume the pending execution were it left, avoiding useless execution of external services.
--->
----
+There is also some kind of persistence involved that record in a durable log the interactions of the workflow and its single steps.
 
-```mermaid
-sequenceDiagram
-box rgb(40,40,40) Workflow
-participant Workflow
-participant Service1 
-participant Service2
-participant Service3
-participant Service4
-end
-rect rgb(60,60,60)
-Workflow->>+Service1: Activity 1
-end
-rect rgb(60,60,60)
-Workflow->>Service2: Activity 2
-end
-rect rgb(60,60,60)
-Workflow->>+Service3: Activity 3
-end
-rect rgb(60,60,60)
-Workflow->>Service1: Activity 3
-end
-rect rgb(60,60,60) 
-Workflow->>Service4: Activity 4
-end
-```
-<!--
-Let's start by putting on some naming convention.
-
-From now on we'll call Activity the interaction from the workflow to the external services.
-A workflow is then just the logic glue that ties together a sequence of activities.
+Thanks to this durable log, if the execution is retried after a server restart or a regular retry, the workflow can skip altogether the already performed steps, and resume the pending execution were it left, avoiding useless execution of external services.
 -->
+
 ---
 layout: two-cols
 ---
@@ -378,11 +383,10 @@ layout: two-cols
 - Executes an Effect
 - Uniquely identified inside Workflow
 - Requires schemas for success and failure
-- Will be retried upon restarts
 
 ::right::
 
-```ts{all|14|15|16}
+```ts{all|14|15|16-17|3-12}
 const getTotalAmount = (id: string) =>
   pipe(
     Http.request.get(`/get-total-amount/${id}`)
@@ -396,22 +400,21 @@ const getTotalAmount = (id: string) =>
       )
     ),
     Activity.make(
-      "get-amount-due", // identifier
+      `get-amount-due-${id}`, // identifier
       Schema.number, // success schema
-      Schema.struct({ code: Schema.number, message: Schema.string })
+      Schema.struct({ code: Schema.number, 
+        message: Schema.string }) // error schema
     )
   )
 ```
 
 <!--
 The first basic building block we want to define is an Activity.
-What is an activity? An activity is a effect that gets executed inside a workflow.
-It can do whatever you want, you can perform things on a database, you can make http calls, whatever you want.
+Activities can do anything, you can perform things on a database, you can make http calls, whatever you want.
 
 An activity is identified with a string that needs to be unique inside the execution of your workflow. 
 In order to know how to persist the execution result, an activity takes in both the schema of the failure and the success type it can results into. Only string defects are supported at the moment.
 Finally you have to provide the effect to be run as body of the activity.
-That effect will be retried by default, so it needs to be idempotent.
 -->
 
 
@@ -423,7 +426,6 @@ layout: two-cols
 <br/>
 
 - Is started by a Request
-- Is identified by a globally unique id
 - Requires schemas for success and failure
 - Has a payload of information
 
@@ -726,7 +728,7 @@ There is also a method to access the current attempt number, in order to know if
 -->
 ---
 layout: image
-image: image-wf-update.gif
+image: /image-wf-update.gif
 ---
 
 <!--
@@ -758,7 +760,7 @@ const getTotalAmount = (id: string) =>
         Effect.zipRight(Workflow.yieldExecution)
       ))
     ),
-    Activity.make("get-amount-due", Schema.number, Schema.never)
+    Activity.make(`get-amount-due-${id}`, Schema.number, Schema.never)
   )
 ```
 <!--
@@ -860,7 +862,7 @@ To some extends the workflow code we've seen is can be seen as just regular effe
 ## Scaling the system
 <br/>
 
-```mermaid { scale: 0.35 }
+```mermaid { scale: 0.45 }
      C4Context
       Container_Boundary(c1, "Server") {
         System(ApiGateway, "API Gateway", "Exposes REST APIs to interact with the system")
@@ -1059,3 +1061,49 @@ Effect cluster provides all the basic building blocks you'll need to build distr
 
 `@effect/cluster-pg`
 - Postgres based persistency for Workflow and Sharding
+
+---
+layout: fact
+---
+
+## Happy Effect-ing!
+Thanks for your time!
+
+
+---
+
+# .
+
+---
+
+```mermaid
+sequenceDiagram
+box rgb(40,40,40) Workflow
+participant Workflow
+participant Service1 
+participant Service2
+participant Service3
+participant Service4
+end
+rect rgb(60,60,60)
+Workflow->>+Service1: Activity 1
+end
+rect rgb(60,60,60)
+Workflow->>Service2: Activity 2
+end
+rect rgb(60,60,60)
+Workflow->>+Service3: Activity 3
+end
+rect rgb(60,60,60)
+Workflow->>Service1: Activity 3
+end
+rect rgb(60,60,60) 
+Workflow->>Service4: Activity 4
+end
+```
+<!--
+Let's start by putting on some naming convention.
+
+From now on we'll call Activity the single step.
+A workflow is then just the logic glue that ties together a sequence of activities.
+-->
