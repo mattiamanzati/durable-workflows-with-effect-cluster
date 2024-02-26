@@ -1,5 +1,5 @@
 {
-  "name": "long-running-process",
+  "name": "durable-workflows-with-effect-cluster",
   "private": true,
   "scripts": {
     "build": "slidev build",
